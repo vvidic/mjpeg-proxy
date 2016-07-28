@@ -47,40 +47,48 @@ import "errors"
    JPEG data...
 */
 
-func chunker(body io.ReadCloser, boundary string, pubChan chan []byte, stopChan chan bool) error {
+func chunker(body io.ReadCloser, boundary string, pubChan chan []byte, stopChan chan bool) {
 	fmt.Print("Chunker: starting\n")
 
 	reader := bufio.NewReader(body)
 	defer body.Close()
 
+	defer close(pubChan)
+	defer close(stopChan)
+
+	var failure error;
+
 	ChunkLoop:
 	for {
 		head, size, err := readChunkHeader(reader, boundary)
 		if err != nil {
-			return err
+			failure = err
+			break ChunkLoop
 		}
 
 		data, err := readChunkData(reader, size)
 		if err != nil {
-			return err
+			failure = err
+			break ChunkLoop
 		}
 
 		select {
 		case <-stopChan:
-			fmt.Print("Chunker: received stop\n")
 			break ChunkLoop
 		case pubChan <- append(head, data...):
 		}
 
 		if size == 0 {
-			fmt.Print("Chunker: received final chunk\n")
+			failure = errors.New("received final chunk")
 			break ChunkLoop
 		}
 	}
 
-	fmt.Print("Chunker: stopping\n")
+	if failure != nil {
+		fmt.Printf("Chunker: %s\n", failure)
+	}
 
-	return nil
+	fmt.Print("Chunker: stopping\n")
 }
 
 func readChunkHeader(reader *bufio.Reader, boundary string) (head []byte, size int, err error) {
@@ -153,6 +161,49 @@ func readChunkData(reader *bufio.Reader, size int) (buf []byte, err error) {
 	return
 }
 
+func getBoundary(resp http.Response) (string, error) {
+	ct := resp.Header.Get("Content-Type")
+	prefix := "multipart/x-mixed-replace;boundary="
+	if !strings.HasPrefix(ct, prefix) {
+		err_str := fmt.Sprintf("Content-Type is invalid (%s)", ct)
+		return "", errors.New(err_str)
+	}
+
+	boundary := "--" + strings.TrimPrefix(ct, prefix)
+	return boundary, nil;
+}
+
+func connectChunker(url, username, password string) (*http.Response, string, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if username != "" && password != "" {
+		req.SetBasicAuth(username, password)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		err_str := fmt.Sprintf("Request failed (%s)", resp.Status)
+		return nil, "", errors.New(err_str)
+	}
+
+	boundary, err := getBoundary(*resp)
+	if err != nil {
+		resp.Body.Close()
+		return nil, "", err
+	}
+
+	return resp, boundary, nil;
+}
+
 type PubSub struct {
 	url         string
 	username    string
@@ -179,10 +230,6 @@ func NewPubSub(url, username, password string) *PubSub {
 	return pubsub
 }
 
-func (pubsub *PubSub) SetHeader(header http.Header) {
-	pubsub.header = header
-}
-
 func (pubsub *PubSub) GetHeader() http.Header {
 	return pubsub.header
 }
@@ -202,8 +249,14 @@ func (pubsub *PubSub) Unsubscribe(s *Subscriber) {
 func (pubsub *PubSub) loop() {
 	for {
 		select {
-		case data := <-pubsub.pubChan:
-			pubsub.doPublish(data)
+		case data, ok := <-pubsub.pubChan:
+			if ok {
+				pubsub.doPublish(data)
+			} else {
+				pubsub.stopChan = nil
+				pubsub.stopPublisher()
+				pubsub.stopSubscribers()
+			}
 
 		case sub := <-pubsub.subChan:
 			pubsub.doSubscribe(sub)
@@ -240,9 +293,7 @@ func (pubsub *PubSub) doSubscribe(s *Subscriber) {
 }
 
 func (pubsub *PubSub) stopSubscribers() {
-	subs := pubsub.subscribers
-
-	for s, _ := range subs {
+	for s, _ := range pubsub.subscribers {
 		close(s.ChunkChannel)
 	}
 }
@@ -261,39 +312,12 @@ func (pubsub *PubSub) doUnsubscribe(s *Subscriber) {
 func (pubsub *PubSub) startPublisher() error {
 	fmt.Printf("PubSub: starting publisher for %s\n", pubsub.url)
 
-	req, err := http.NewRequest("GET", pubsub.url, nil)
+	resp, boundary, err := connectChunker(pubsub.url, pubsub.username, pubsub.password)
 	if err != nil {
 		return err
 	}
 
-	if pubsub.username != "" && pubsub.password != "" {
-		req.SetBasicAuth(pubsub.username, pubsub.password)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	body := resp.Body
-
-	if resp.StatusCode != http.StatusOK {
-		body.Close()
-		err_str := fmt.Sprintf("Request failed (%s)", resp.Status)
-		return errors.New(err_str)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	prefix := "multipart/x-mixed-replace;boundary="
-	if !strings.HasPrefix(ct, prefix) {
-		body.Close()
-		err_str := fmt.Sprintf("Content-Type is invalid (%s)", ct)
-		return errors.New(err_str)
-	}
-	boundary := "--" + strings.TrimPrefix(ct, prefix)
-
-	pubsub.SetHeader(resp.Header)
-
+	pubsub.header = resp.Header
 	pubsub.pubChan = make(chan []byte)
 	pubsub.stopChan = make(chan bool)
 
@@ -303,17 +327,13 @@ func (pubsub *PubSub) startPublisher() error {
 }
 
 func (pubsub *PubSub) stopPublisher() {
-	fmt.Printf("PubSub: stopping publisher\n")
-
 	if pubsub.stopChan != nil {
+		fmt.Printf("PubSub: stopping publisher\n")
 		pubsub.stopChan <- true
-
-		close(pubsub.stopChan)
-		pubsub.stopChan = nil
-
-		close(pubsub.pubChan)
-		pubsub.pubChan = nil
 	}
+
+	pubsub.stopChan = nil
+	pubsub.pubChan = nil
 }
 
 type Subscriber struct {
