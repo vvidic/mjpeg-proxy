@@ -1,0 +1,10 @@
+[
+   {
+      "Source" : "http://213.193.89.202/axis-cgi/mjpg/video.cgi",
+      "Url" : "/source1"
+   },
+   {
+      "Source" : "http://klosterplatz.selfip.info/axis-cgi/mjpg/video.cgi",
+      "Url" : "/source2"
+   }
+]
