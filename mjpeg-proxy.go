@@ -146,22 +146,19 @@ func readChunkHeader(reader *bufio.Reader) (head []byte, size int, err error) {
 	return
 }
 
-func readChunkData(reader *bufio.Reader, size int) (buf []byte, err error) {
-	buf = make([]byte, size)
-	err = nil
+func readChunkData(reader *bufio.Reader, size int) ([]byte, error) {
+	buf := make([]byte, size)
 
-	pos := 0
-	for pos < size {
-		var n int
-		n, err = reader.Read(buf[pos:])
+	for pos := 0; pos < size; {
+		n, err := reader.Read(buf[pos:])
 		if err != nil {
-			return
+			return nil, err
 		}
 
 		pos += n
 	}
 
-	return
+	return buf, nil
 }
 
 func getBoundary(resp http.Response) (string, error) {
