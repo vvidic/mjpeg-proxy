@@ -417,8 +417,8 @@ type configSource struct {
 	Url      string
 }
 
-func loadConfig(config string) error {
-	file, err := os.Open(config)
+func loadConfig(filename string) error {
+	file, err := os.Open(filename)
 	if err != nil {
 		return err
 	}
@@ -458,13 +458,13 @@ func main() {
 	username := flag.String("username", "", "source mjpg username")
 	password := flag.String("password", "", "source mjpg password")
 	url := flag.String("uri", "/", "proxy serve uri")
-	config := flag.String("config", "", "JSON configuration file to load")
+	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	flag.Parse()
 
 	var err error
-	if *config != "" {
-		err = loadConfig(*config)
+	if *sources != "" {
+		err = loadConfig(*sources)
 	} else {
 		err = startSource(*source, *username, *password, *url)
 	}
