@@ -20,17 +20,17 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -112,129 +112,6 @@ func (chunker *Chunker) Connect() error {
 	return nil
 }
 
-func (chunker *Chunker) GetHeader() http.Header {
-	return chunker.resp.Header
-}
-
-func (chunker *Chunker) Start(pubChan chan []byte) {
-	fmt.Printf("chunker[%s]: started\n", chunker.id)
-
-	body := chunker.resp.Body
-	reader := bufio.NewReader(body)
-	defer func() {
-		err := body.Close()
-		if err != nil {
-			fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
-		}
-	}()
-	defer close(pubChan)
-
-	var failure error
-
-ChunkLoop:
-	for {
-		head, size, err := readChunkHeader(reader)
-		if err != nil {
-			failure = err
-			break ChunkLoop
-		}
-
-		data, err := readChunkData(reader, size)
-		if err != nil {
-			failure = err
-			break ChunkLoop
-		}
-
-		select {
-		case <-chunker.stop:
-			break ChunkLoop
-		case pubChan <- append(head, data...):
-		}
-
-		if size == 0 {
-			failure = errors.New("received final chunk of size 0")
-			break ChunkLoop
-		}
-	}
-
-	if failure != nil {
-		fmt.Printf("chunker[%s]: failed: %s\n", chunker.id, failure)
-	} else {
-		fmt.Printf("chunker[%s]: stopped\n", chunker.id)
-	}
-}
-
-func (chunker *Chunker) Stop() {
-	fmt.Printf("chunker[%s]: stopping\n", chunker.id)
-	close(chunker.stop)
-}
-
-func readChunkHeader(reader *bufio.Reader) (head []byte, size int, err error) {
-	head = make([]byte, 0)
-	size = -1
-	err = nil
-
-	// read boundary
-	var line []byte
-	line, err = reader.ReadSlice('\n')
-	if err != nil {
-		return
-	}
-
-	/* don't check for valid boundary in this function; a lot of webcams
-	(such as those by AXIS) seem to provide improper boundaries. */
-
-	head = append(head, line...)
-
-	// read header
-	for {
-		line, err = reader.ReadSlice('\n')
-		if err != nil {
-			return
-		}
-		head = append(head, line...)
-
-		// empty line marks end of header
-		lineStr := strings.TrimRight(string(line), "\r\n")
-		if len(lineStr) == 0 {
-			break
-		}
-
-		// find data size
-		parts := strings.SplitN(lineStr, ": ", 2)
-		if strings.EqualFold(parts[0], "Content-Length") {
-			var n int
-			n, err = strconv.Atoi(parts[1])
-			if err != nil {
-				return
-			}
-			size = n
-		}
-	}
-
-	if size == -1 {
-		err = errors.New("Content-Length chunk header not found")
-		return
-	}
-
-	return
-}
-
-func readChunkData(reader *bufio.Reader, size int) ([]byte, error) {
-	buf := make([]byte, size)
-
-	for pos := 0; pos < size; {
-		n, err := reader.Read(buf[pos:])
-		if err != nil {
-			return nil, err
-		}
-
-		pos += n
-	}
-
-	return buf, nil
-}
-
 func getBoundary(resp http.Response) (string, error) {
 	contentType := resp.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(contentType)
@@ -251,6 +128,75 @@ func getBoundary(resp http.Response) (string, error) {
 	}
 
 	return boundary, nil
+}
+
+func (chunker *Chunker) GetHeader() http.Header {
+	return chunker.resp.Header
+}
+
+func (chunker *Chunker) Start(pubChan chan []byte) {
+	fmt.Printf("chunker[%s]: started\n", chunker.id)
+
+	body := chunker.resp.Body
+	defer func() {
+		err := body.Close()
+		if err != nil {
+			fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
+		}
+	}()
+	defer close(pubChan)
+
+	var failure error
+	mr := multipart.NewReader(body, chunker.boundary)
+
+ChunkLoop:
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break ChunkLoop
+		}
+		if err != nil {
+			failure = err
+			break ChunkLoop
+		}
+
+		data, err := ioutil.ReadAll(part)
+		if err != nil {
+			failure = err
+			break ChunkLoop
+		}
+
+		err = part.Close()
+		if err != nil {
+			failure = err
+			break ChunkLoop
+		}
+
+		if len(data) == 0 {
+			failure = errors.New("received final chunk of size 0")
+			break ChunkLoop
+		}
+
+		head := fmt.Sprintf("\r\n--%s\r\nContent-Type: image/jpeg\r\nContent-Size: %d\r\n\r\n",
+			chunker.boundary, len(data))
+
+		select {
+		case <-chunker.stop:
+			break ChunkLoop
+		case pubChan <- append([]byte(head), data...):
+		}
+	}
+
+	if failure != nil {
+		fmt.Printf("chunker[%s]: failed: %s\n", chunker.id, failure)
+	} else {
+		fmt.Printf("chunker[%s]: stopped\n", chunker.id)
+	}
+}
+
+func (chunker *Chunker) Stop() {
+	fmt.Printf("chunker[%s]: stopping\n", chunker.id)
+	close(chunker.stop)
 }
 
 type PubSub struct {
