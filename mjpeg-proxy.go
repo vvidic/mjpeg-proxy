@@ -25,7 +25,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,18 +44,16 @@ import (
    JPEG data...
 */
 
-func dclose(c io.Closer) {
-	if err := c.Close(); err != nil {
-		log.Fatal(err)
-	}
-}
-
 func chunker(body io.ReadCloser, pubChan chan []byte, stopChan chan bool) {
-	fmt.Print("Chunker: starting\n")
+	fmt.Println("chunker: starting")
 
 	reader := bufio.NewReader(body)
-	defer dclose(body)
-
+	defer func() {
+		err := body.Close()
+		if err != nil {
+			fmt.Println("chunker: body close failed:", err)
+		}
+	}()
 	defer close(pubChan)
 	defer close(stopChan)
 
@@ -89,10 +86,10 @@ ChunkLoop:
 	}
 
 	if failure != nil {
-		fmt.Printf("Chunker: %s\n", failure)
+		fmt.Println("chunker:", failure)
 	}
 
-	fmt.Print("Chunker: stopping\n")
+	fmt.Println("chunker: stopping")
 }
 
 func readChunkHeader(reader *bufio.Reader) (head []byte, size int, err error) {
@@ -198,14 +195,14 @@ func connectChunker(url, username, password string) (*http.Response, string, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		dclose(resp.Body)
+		resp.Body.Close()
 		errStr := fmt.Sprintf("Request failed (%s)", resp.Status)
 		return nil, "", errors.New(errStr)
 	}
 
 	boundary, err := getBoundary(*resp)
 	if err != nil {
-		dclose(resp.Body)
+		resp.Body.Close()
 		return nil, "", err
 	}
 
