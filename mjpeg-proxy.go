@@ -355,51 +355,49 @@ func NewSubscriber(client string) *Subscriber {
 	return sub
 }
 
-func makeHandler(pubsub *PubSub) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("server: client %s connected\n", r.RemoteAddr)
+func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("server: client %s connected\n", r.RemoteAddr)
 
-		// prepare response for flushing
-		flusher, ok := w.(http.Flusher)
+	// prepare response for flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		fmt.Printf("server: client %s could not be flushed",
+			r.RemoteAddr)
+		return
+	}
+
+	// subscribe to new chunks
+	sub := NewSubscriber(r.RemoteAddr)
+	pubsub.Subscribe(sub)
+	defer pubsub.Unsubscribe(sub)
+
+	headerSet := false
+	for {
+		// wait for next chunk
+		data, ok := <-sub.ChunkChannel
 		if !ok {
-			fmt.Printf("server: client %s could not be flushed",
-				r.RemoteAddr)
-			return
+			break
 		}
 
-		// subscribe to new chunks
-		sub := NewSubscriber(r.RemoteAddr)
-		pubsub.Subscribe(sub)
-		defer pubsub.Unsubscribe(sub)
-
-		headerSet := false
-		for {
-			// wait for next chunk
-			data, ok := <-sub.ChunkChannel
-			if !ok {
-				break
+		// set header before first chunk sent
+		if !headerSet {
+			header := w.Header()
+			for k, v := range pubsub.GetHeader() {
+				header[k] = v
 			}
 
-			// set header before first chunk sent
-			if !headerSet {
-				header := w.Header()
-				for k, v := range pubsub.GetHeader() {
-					header[k] = v
-				}
+			headerSet = true
+		}
 
-				headerSet = true
-			}
+		// send chunk to client
+		_, err := w.Write(data)
+		flusher.Flush()
 
-			// send chunk to client
-			_, err := w.Write(data)
-			flusher.Flush()
-
-			// check for client close
-			if err != nil {
-				fmt.Printf("server: client %s failed: %s\n",
-					r.RemoteAddr, err)
-				break
-			}
+		// check for client close
+		if err != nil {
+			fmt.Printf("server: client %s failed: %s\n",
+				r.RemoteAddr, err)
+			break
 		}
 	}
 }
@@ -421,7 +419,7 @@ func main() {
 
 	// start web server
 	fmt.Printf("server: starting on address %s with url %s\n", *bind, *url)
-	http.HandleFunc(*url, makeHandler(pubsub))
+	http.Handle(*url, pubsub)
 	err := http.ListenAndServe(*bind, nil)
 	if err != nil {
 		fmt.Println("server: failed to start:", err)
