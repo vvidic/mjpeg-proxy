@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -235,22 +236,20 @@ func readChunkData(reader *bufio.Reader, size int) ([]byte, error) {
 }
 
 func getBoundary(resp http.Response) (string, error) {
-	ct := strings.Split(resp.Header.Get("Content-Type"), ";")
-	fixedCt := ""
-	fixedPrefix := "multipart/x-mixed-replace;boundary="
-
-	if len(ct) < 2 || !strings.HasPrefix(ct[0], "multipart/x-mixed-replace") || !strings.HasPrefix(strings.TrimPrefix(ct[1], " "), "boundary=") {
-		errStr := fmt.Sprintf("Content-Type is invalid (%s)", strings.Join(ct, ";"))
-		return "", errors.New(errStr)
+	contentType := resp.Header.Get("Content-Type")
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", err
 	}
-	// Build normalized Content-Type string
-	builder := strings.Builder{}
-	builder.WriteString(ct[0])
-	builder.WriteString(";")
-	builder.WriteString(strings.TrimPrefix(ct[1], " "))
-	fixedCt = builder.String()
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return "", fmt.Errorf("expected multipart media type: %s", contentType)
+	}
 
-	boundary := "--" + strings.TrimPrefix(fixedCt, fixedPrefix)
+	boundary := params["boundary"]
+	if boundary == "" {
+		return "", fmt.Errorf("boundary not found: %s", contentType)
+	}
+
 	return boundary, nil
 }
 
