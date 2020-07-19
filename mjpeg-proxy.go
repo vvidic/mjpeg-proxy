@@ -499,14 +499,14 @@ func main() {
 		err = startSource(*source, *username, *password, *url)
 	}
 	if err != nil {
-		fmt.Println("config: ", err)
+		fmt.Println("config:", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("server: starting on address %s\n", *bind)
 	err = http.ListenAndServe(*bind, nil)
 	if err != nil {
-		fmt.Println("server: failed to start:", err)
+		fmt.Println("server:", err)
 		os.Exit(1)
 	}
 }
