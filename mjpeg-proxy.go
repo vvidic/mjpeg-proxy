@@ -355,12 +355,12 @@ func NewSubscriber() *Subscriber {
 
 func makeHandler(pubsub *PubSub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("Server: client %s connected\n", r.RemoteAddr)
+		fmt.Printf("server: client %s connected\n", r.RemoteAddr)
 
 		// prepare response for flushing
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			fmt.Printf("Server: client %s could not be flushed",
+			fmt.Printf("server: client %s could not be flushed",
 				r.RemoteAddr)
 			return
 		}
@@ -394,7 +394,7 @@ func makeHandler(pubsub *PubSub) http.HandlerFunc {
 
 			// check for client close
 			if err != nil {
-				fmt.Printf("Server: client %s failed (%s)\n",
+				fmt.Printf("server: client %s failed: %s\n",
 					r.RemoteAddr, err)
 				break
 			}
@@ -404,23 +404,24 @@ func makeHandler(pubsub *PubSub) http.HandlerFunc {
 
 func main() {
 	// check parameters
-	sourcePtr := flag.String("source", "http://example.com/img.mjpg", "source mjpg url")
-	usernamePtr := flag.String("username", "", "source mjpg username")
-	passwordPtr := flag.String("password", "", "source mjpg password")
+	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg url")
+	username := flag.String("username", "", "source mjpg username")
+	password := flag.String("password", "", "source mjpg password")
 
-	bindPtr := flag.String("bind", ":8080", "proxy bind address")
-	urlPtr := flag.String("url", "/", "proxy serve url")
+	bind := flag.String("bind", ":8080", "proxy bind address")
+	url := flag.String("url", "/", "proxy serve url")
 
 	flag.Parse()
 
 	// start pubsub client connector
-	pubsub := NewPubSub(*sourcePtr, *usernamePtr, *passwordPtr)
+	pubsub := NewPubSub(*source, *username, *password)
 	pubsub.Start()
 
 	// start web server
-	http.HandleFunc(*urlPtr, makeHandler(pubsub))
-	err := http.ListenAndServe(*bindPtr, nil)
+	fmt.Printf("server: starting on address %s with url %s\n", *bind, *url)
+	http.HandleFunc(*url, makeHandler(pubsub))
+	err := http.ListenAndServe(*bind, nil)
 	if err != nil {
-		fmt.Printf("Failed to start server: %s\n", err)
+		fmt.Println("server: failed to start:", err)
 	}
 }
