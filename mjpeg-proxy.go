@@ -286,12 +286,12 @@ func (pubsub *PubSub) doPublish(data []byte) {
 func (pubsub *PubSub) doSubscribe(s *Subscriber) {
 	pubsub.subscribers[s] = true
 
-	fmt.Printf("PubSub: subscriber %v added (total=%d)\n",
-		s, len(pubsub.subscribers))
+	fmt.Printf("pubsub: added subscriber %s (total=%d)\n",
+		s.RemoteAddr, len(pubsub.subscribers))
 
 	if len(pubsub.subscribers) == 1 {
 		if err := pubsub.startPublisher(); err != nil {
-			fmt.Printf("PubSub: failed to start publisher (%s)\n", err)
+			fmt.Println("pubsub: failed to start publisher:", err)
 			pubsub.stopSubscribers()
 		}
 	}
@@ -306,8 +306,8 @@ func (pubsub *PubSub) stopSubscribers() {
 func (pubsub *PubSub) doUnsubscribe(s *Subscriber) {
 	delete(pubsub.subscribers, s)
 
-	fmt.Printf("PubSub: subscriber %v removed (total=%d)\n",
-		s, len(pubsub.subscribers))
+	fmt.Printf("pubsub: removed subscriber %s (total=%d)\n",
+		s.RemoteAddr, len(pubsub.subscribers))
 
 	if len(pubsub.subscribers) == 0 {
 		pubsub.stopPublisher()
@@ -315,7 +315,7 @@ func (pubsub *PubSub) doUnsubscribe(s *Subscriber) {
 }
 
 func (pubsub *PubSub) startPublisher() error {
-	fmt.Printf("PubSub: starting publisher for %s\n", pubsub.url)
+	fmt.Println("pubsub: starting publisher for", pubsub.url)
 
 	resp, _, err := connectChunker(pubsub.url, pubsub.username, pubsub.password)
 	if err != nil {
@@ -333,7 +333,7 @@ func (pubsub *PubSub) startPublisher() error {
 
 func (pubsub *PubSub) stopPublisher() {
 	if pubsub.stopChan != nil {
-		fmt.Printf("PubSub: stopping publisher\n")
+		fmt.Println("pubsub: stopping publisher")
 		pubsub.stopChan <- true
 	}
 
@@ -342,12 +342,14 @@ func (pubsub *PubSub) stopPublisher() {
 }
 
 type Subscriber struct {
+	RemoteAddr   string
 	ChunkChannel chan []byte
 }
 
-func NewSubscriber() *Subscriber {
+func NewSubscriber(client string) *Subscriber {
 	sub := new(Subscriber)
 
+	sub.RemoteAddr = client
 	sub.ChunkChannel = make(chan []byte)
 
 	return sub
@@ -366,7 +368,7 @@ func makeHandler(pubsub *PubSub) http.HandlerFunc {
 		}
 
 		// subscribe to new chunks
-		sub := NewSubscriber()
+		sub := NewSubscriber(r.RemoteAddr)
 		pubsub.Subscribe(sub)
 		defer pubsub.Unsubscribe(sub)
 
