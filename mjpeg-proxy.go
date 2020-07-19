@@ -274,12 +274,12 @@ func (pubSub *PubSub) doPublish(data []byte) {
 func (pubSub *PubSub) doSubscribe(s *Subscriber) {
 	pubSub.subscribers[s] = true
 
-	fmt.Printf("pubSub[%s]: added subscriber %s (total=%d)\n",
+	fmt.Printf("pubsub[%s]: added subscriber %s (total=%d)\n",
 		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
 
 	if len(pubSub.subscribers) == 1 {
 		if err := pubSub.startChunker(); err != nil {
-			fmt.Printf("pubSub[%s]: failed to start chunker: %s\n",
+			fmt.Printf("pubsub[%s]: failed to start chunker: %s\n",
 				pubSub.id, err)
 			pubSub.stopSubscribers()
 		}
@@ -295,7 +295,7 @@ func (pubSub *PubSub) stopSubscribers() {
 func (pubSub *PubSub) doUnsubscribe(s *Subscriber) {
 	delete(pubSub.subscribers, s)
 
-	fmt.Printf("pubSub[%s]: removed subscriber %s (total=%d)\n",
+	fmt.Printf("pubsub[%s]: removed subscriber %s (total=%d)\n",
 		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
 
 	if len(pubSub.subscribers) == 0 {
