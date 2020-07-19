@@ -24,7 +24,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,9 +43,68 @@ import (
    JPEG data...
 */
 
-func chunker(body io.ReadCloser, pubChan chan []byte, stopChan chan bool) {
-	fmt.Println("chunker: starting")
+type Chunker struct {
+	url      string
+	username string
+	password string
+	resp     *http.Response
+	boundary string
+	stop     chan struct{}
+}
 
+func NewChunker(url, username, password string) *Chunker {
+	chunker := new(Chunker)
+
+	chunker.url = url
+	chunker.username = username
+	chunker.password = password
+
+	return chunker
+}
+
+func (chunker *Chunker) Connect() error {
+	fmt.Println("chunker: connecting to", chunker.url)
+
+	req, err := http.NewRequest("GET", chunker.url, nil)
+	if err != nil {
+		return err
+	}
+
+	if chunker.username != "" && chunker.password != "" {
+		req.SetBasicAuth(chunker.username, chunker.password)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return fmt.Errorf("request failed: %s", resp.Status)
+	}
+
+	boundary, err := getBoundary(*resp)
+	if err != nil {
+		resp.Body.Close()
+		return err
+	}
+
+	chunker.resp = resp
+	chunker.boundary = boundary
+	chunker.stop = make(chan struct{})
+	return nil
+}
+
+func (chunker *Chunker) GetHeader() http.Header {
+	return chunker.resp.Header
+}
+
+func (chunker *Chunker) Start(pubChan chan []byte) {
+	fmt.Println("chunker: started")
+
+	body := chunker.resp.Body
 	reader := bufio.NewReader(body)
 	defer func() {
 		err := body.Close()
@@ -55,7 +113,6 @@ func chunker(body io.ReadCloser, pubChan chan []byte, stopChan chan bool) {
 		}
 	}()
 	defer close(pubChan)
-	defer close(stopChan)
 
 	var failure error
 
@@ -74,22 +131,27 @@ ChunkLoop:
 		}
 
 		select {
-		case <-stopChan:
+		case <-chunker.stop:
 			break ChunkLoop
 		case pubChan <- append(head, data...):
 		}
 
 		if size == 0 {
-			failure = errors.New("received final chunk")
+			failure = errors.New("received final chunk of size 0")
 			break ChunkLoop
 		}
 	}
 
 	if failure != nil {
-		fmt.Println("chunker:", failure)
+		fmt.Println("chunker: failed: ", failure)
+	} else {
+		fmt.Println("chunker: stopped")
 	}
+}
 
+func (chunker *Chunker) Stop() {
 	fmt.Println("chunker: stopping")
+	close(chunker.stop)
 }
 
 func readChunkHeader(reader *bufio.Reader) (head []byte, size int, err error) {
@@ -178,65 +240,23 @@ func getBoundary(resp http.Response) (string, error) {
 	return boundary, nil
 }
 
-func connectChunker(url, username, password string) (*http.Response, string, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if username != "" && password != "" {
-		req.SetBasicAuth(username, password)
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		errStr := fmt.Sprintf("Request failed (%s)", resp.Status)
-		return nil, "", errors.New(errStr)
-	}
-
-	boundary, err := getBoundary(*resp)
-	if err != nil {
-		resp.Body.Close()
-		return nil, "", err
-	}
-
-	return resp, boundary, nil
-}
-
 type PubSub struct {
-	url         string
-	username    string
-	password    string
+	chunker     *Chunker
 	pubChan     chan []byte
-	stopChan    chan bool
 	subChan     chan *Subscriber
 	unsubChan   chan *Subscriber
 	subscribers map[*Subscriber]bool
-	header      http.Header
 }
 
-func NewPubSub(url, username, password string) *PubSub {
+func NewPubSub(chunker *Chunker) *PubSub {
 	pubsub := new(PubSub)
 
-	pubsub.url = url
-	pubsub.username = username
-	pubsub.password = password
-
+	pubsub.chunker = chunker
 	pubsub.subChan = make(chan *Subscriber)
 	pubsub.unsubChan = make(chan *Subscriber)
 	pubsub.subscribers = make(map[*Subscriber]bool)
 
 	return pubsub
-}
-
-func (pubsub *PubSub) GetHeader() http.Header {
-	return pubsub.header
 }
 
 func (pubsub *PubSub) Start() {
@@ -258,8 +278,7 @@ func (pubsub *PubSub) loop() {
 			if ok {
 				pubsub.doPublish(data)
 			} else {
-				pubsub.stopChan = nil
-				pubsub.stopPublisher()
+				pubsub.stopChunker()
 				pubsub.stopSubscribers()
 			}
 
@@ -290,8 +309,8 @@ func (pubsub *PubSub) doSubscribe(s *Subscriber) {
 		s.RemoteAddr, len(pubsub.subscribers))
 
 	if len(pubsub.subscribers) == 1 {
-		if err := pubsub.startPublisher(); err != nil {
-			fmt.Println("pubsub: failed to start publisher:", err)
+		if err := pubsub.startChunker(); err != nil {
+			fmt.Println("pubsub: failed to start chunker:", err)
 			pubsub.stopSubscribers()
 		}
 	}
@@ -310,34 +329,27 @@ func (pubsub *PubSub) doUnsubscribe(s *Subscriber) {
 		s.RemoteAddr, len(pubsub.subscribers))
 
 	if len(pubsub.subscribers) == 0 {
-		pubsub.stopPublisher()
+		pubsub.stopChunker()
 	}
 }
 
-func (pubsub *PubSub) startPublisher() error {
-	fmt.Println("pubsub: starting publisher for", pubsub.url)
-
-	resp, _, err := connectChunker(pubsub.url, pubsub.username, pubsub.password)
+func (pubsub *PubSub) startChunker() error {
+	err := pubsub.chunker.Connect()
 	if err != nil {
 		return err
 	}
 
-	pubsub.header = resp.Header
 	pubsub.pubChan = make(chan []byte)
-	pubsub.stopChan = make(chan bool)
-
-	go chunker(resp.Body, pubsub.pubChan, pubsub.stopChan)
+	go pubsub.chunker.Start(pubsub.pubChan)
 
 	return nil
 }
 
-func (pubsub *PubSub) stopPublisher() {
-	if pubsub.stopChan != nil {
-		fmt.Println("pubsub: stopping publisher")
-		pubsub.stopChan <- true
+func (pubsub *PubSub) stopChunker() {
+	if pubsub.pubChan != nil {
+		pubsub.chunker.Stop()
 	}
 
-	pubsub.stopChan = nil
 	pubsub.pubChan = nil
 }
 
@@ -356,8 +368,6 @@ func NewSubscriber(client string) *Subscriber {
 }
 
 func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("server: client %s connected\n", r.RemoteAddr)
-
 	// prepare response for flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -371,7 +381,7 @@ func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pubsub.Subscribe(sub)
 	defer pubsub.Unsubscribe(sub)
 
-	headerSet := false
+	headersSent := false
 	for {
 		// wait for next chunk
 		data, ok := <-sub.ChunkChannel
@@ -379,14 +389,16 @@ func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// set header before first chunk sent
-		if !headerSet {
+		// send header before first chunk
+		if !headersSent {
 			header := w.Header()
-			for k, v := range pubsub.GetHeader() {
-				header[k] = v
+			for k, vv := range pubsub.chunker.GetHeader() {
+				for _, v := range vv {
+					header.Add(k, v)
+				}
 			}
-
-			headerSet = true
+			w.WriteHeader(http.StatusOK)
+			headersSent = true
 		}
 
 		// send chunk to client
@@ -414,7 +426,8 @@ func main() {
 	flag.Parse()
 
 	// start pubsub client connector
-	pubsub := NewPubSub(*source, *username, *password)
+	chunker := NewChunker(*source, *username, *password)
+	pubsub := NewPubSub(chunker)
 	pubsub.Start()
 
 	// start web server
