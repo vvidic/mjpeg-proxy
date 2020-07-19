@@ -29,6 +29,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -187,13 +188,10 @@ ChunkLoop:
 			break ChunkLoop
 		}
 
-		head := fmt.Sprintf("\r\n--%s\r\nContent-Type: image/jpeg\r\nContent-Size: %d\r\n\r\n",
-			chunker.boundary, len(data))
-
 		select {
 		case <-chunker.stop:
 			break ChunkLoop
-		case pubChan <- append([]byte(head), data...):
+		case pubChan <- append(data):
 		}
 	}
 
@@ -353,36 +351,48 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pubSub.Subscribe(sub)
 	defer pubSub.Unsubscribe(sub)
 
+	mw := multipart.NewWriter(w)
+	contentType := fmt.Sprintf("multipart/x-mixed-replace; boundary=%s", mw.Boundary())
+
+	mimeHeader := make(textproto.MIMEHeader)
+	mimeHeader.Set("Content-Type", "image/jpeg")
+
 	headersSent := false
 	for {
 		// wait for next chunk
 		data, ok := <-sub.ChunkChannel
 		if !ok {
-			break
+			return
 		}
 
-		// send header before first chunk
+		// send HTTP header before first chunk
 		if !headersSent {
 			header := w.Header()
-			for k, vv := range pubSub.chunker.GetHeader() {
-				for _, v := range vv {
-					header.Add(k, v)
-				}
-			}
+			header.Add("Content-Type", contentType)
 			w.WriteHeader(http.StatusOK)
 			headersSent = true
 		}
 
-		// send chunk to client
-		_, err := w.Write(data)
-		flusher.Flush()
-
-		// check for client close
+		mimeHeader.Set("Content-Size", fmt.Sprintf("%d", len(data)))
+		part, err := mw.CreatePart(mimeHeader)
 		if err != nil {
-			fmt.Printf("server[%s]: client %s failed: %s\n",
-				pubSub.id, r.RemoteAddr, err)
-			break
+			fmt.Printf("server[%s]: part create failed: %s\n", pubSub.id, err)
+			return
 		}
+
+		// send image to client
+		_, err = part.Write(data)
+		if err != nil {
+			fmt.Printf("server[%s]: part write failed: %s\n", pubSub.id, err)
+			return
+		}
+
+		flusher.Flush()
+	}
+
+	err := mw.Close()
+	if err != nil {
+		fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
 	}
 }
 
