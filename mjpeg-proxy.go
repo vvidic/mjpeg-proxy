@@ -1,7 +1,7 @@
 /*
  * mjpeg-proxy -- Republish a MJPEG HTTP image stream using a server in Go
  *
- * Copyright (C) 2015, Valentin Vidic
+ * Copyright (C) 2015-2020, Valentin Vidic
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -67,7 +67,7 @@ func NewChunker(id, source, username, password string) (*Chunker, error) {
 		return nil, err
 	}
 	if !sourceUrl.IsAbs() {
-		return nil, fmt.Errorf("url is not absolute: %s", source)
+		return nil, fmt.Errorf("uri is not absolute: %s", source)
 	}
 
 	chunker.id = id
@@ -97,13 +97,23 @@ func (chunker *Chunker) Connect() error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
+			}
+		}()
 		return fmt.Errorf("request failed: %s", resp.Status)
 	}
 
 	boundary, err := getBoundary(*resp)
 	if err != nil {
-		resp.Body.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
+			}
+		}()
 		return err
 	}
 
@@ -207,51 +217,51 @@ type PubSub struct {
 }
 
 func NewPubSub(id string, chunker *Chunker) *PubSub {
-	pubsub := new(PubSub)
+	pubSub := new(PubSub)
 
-	pubsub.id = id
-	pubsub.chunker = chunker
-	pubsub.subChan = make(chan *Subscriber)
-	pubsub.unsubChan = make(chan *Subscriber)
-	pubsub.subscribers = make(map[*Subscriber]bool)
+	pubSub.id = id
+	pubSub.chunker = chunker
+	pubSub.subChan = make(chan *Subscriber)
+	pubSub.unsubChan = make(chan *Subscriber)
+	pubSub.subscribers = make(map[*Subscriber]bool)
 
-	return pubsub
+	return pubSub
 }
 
-func (pubsub *PubSub) Start() {
-	go pubsub.loop()
+func (pubSub *PubSub) Start() {
+	go pubSub.loop()
 }
 
-func (pubsub *PubSub) Subscribe(s *Subscriber) {
-	pubsub.subChan <- s
+func (pubSub *PubSub) Subscribe(s *Subscriber) {
+	pubSub.subChan <- s
 }
 
-func (pubsub *PubSub) Unsubscribe(s *Subscriber) {
-	pubsub.unsubChan <- s
+func (pubSub *PubSub) Unsubscribe(s *Subscriber) {
+	pubSub.unsubChan <- s
 }
 
-func (pubsub *PubSub) loop() {
+func (pubSub *PubSub) loop() {
 	for {
 		select {
-		case data, ok := <-pubsub.pubChan:
+		case data, ok := <-pubSub.pubChan:
 			if ok {
-				pubsub.doPublish(data)
+				pubSub.doPublish(data)
 			} else {
-				pubsub.stopChunker()
-				pubsub.stopSubscribers()
+				pubSub.stopChunker()
+				pubSub.stopSubscribers()
 			}
 
-		case sub := <-pubsub.subChan:
-			pubsub.doSubscribe(sub)
+		case sub := <-pubSub.subChan:
+			pubSub.doSubscribe(sub)
 
-		case sub := <-pubsub.unsubChan:
-			pubsub.doUnsubscribe(sub)
+		case sub := <-pubSub.unsubChan:
+			pubSub.doUnsubscribe(sub)
 		}
 	}
 }
 
-func (pubsub *PubSub) doPublish(data []byte) {
-	subs := pubsub.subscribers
+func (pubSub *PubSub) doPublish(data []byte) {
+	subs := pubSub.subscribers
 
 	for s := range subs {
 		select {
@@ -261,56 +271,56 @@ func (pubsub *PubSub) doPublish(data []byte) {
 	}
 }
 
-func (pubsub *PubSub) doSubscribe(s *Subscriber) {
-	pubsub.subscribers[s] = true
+func (pubSub *PubSub) doSubscribe(s *Subscriber) {
+	pubSub.subscribers[s] = true
 
-	fmt.Printf("pubsub[%s]: added subscriber %s (total=%d)\n",
-		pubsub.id, s.RemoteAddr, len(pubsub.subscribers))
+	fmt.Printf("pubSub[%s]: added subscriber %s (total=%d)\n",
+		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
 
-	if len(pubsub.subscribers) == 1 {
-		if err := pubsub.startChunker(); err != nil {
-			fmt.Printf("pubsub[%s]: failed to start chunker: %s\n",
-				pubsub.id, err)
-			pubsub.stopSubscribers()
+	if len(pubSub.subscribers) == 1 {
+		if err := pubSub.startChunker(); err != nil {
+			fmt.Printf("pubSub[%s]: failed to start chunker: %s\n",
+				pubSub.id, err)
+			pubSub.stopSubscribers()
 		}
 	}
 }
 
-func (pubsub *PubSub) stopSubscribers() {
-	for s := range pubsub.subscribers {
+func (pubSub *PubSub) stopSubscribers() {
+	for s := range pubSub.subscribers {
 		close(s.ChunkChannel)
 	}
 }
 
-func (pubsub *PubSub) doUnsubscribe(s *Subscriber) {
-	delete(pubsub.subscribers, s)
+func (pubSub *PubSub) doUnsubscribe(s *Subscriber) {
+	delete(pubSub.subscribers, s)
 
-	fmt.Printf("pubsub[%s]: removed subscriber %s (total=%d)\n",
-		pubsub.id, s.RemoteAddr, len(pubsub.subscribers))
+	fmt.Printf("pubSub[%s]: removed subscriber %s (total=%d)\n",
+		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
 
-	if len(pubsub.subscribers) == 0 {
-		pubsub.stopChunker()
+	if len(pubSub.subscribers) == 0 {
+		pubSub.stopChunker()
 	}
 }
 
-func (pubsub *PubSub) startChunker() error {
-	err := pubsub.chunker.Connect()
+func (pubSub *PubSub) startChunker() error {
+	err := pubSub.chunker.Connect()
 	if err != nil {
 		return err
 	}
 
-	pubsub.pubChan = make(chan []byte)
-	go pubsub.chunker.Start(pubsub.pubChan)
+	pubSub.pubChan = make(chan []byte)
+	go pubSub.chunker.Start(pubSub.pubChan)
 
 	return nil
 }
 
-func (pubsub *PubSub) stopChunker() {
-	if pubsub.pubChan != nil {
-		pubsub.chunker.Stop()
+func (pubSub *PubSub) stopChunker() {
+	if pubSub.pubChan != nil {
+		pubSub.chunker.Stop()
 	}
 
-	pubsub.pubChan = nil
+	pubSub.pubChan = nil
 }
 
 type Subscriber struct {
@@ -327,19 +337,19 @@ func NewSubscriber(client string) *Subscriber {
 	return sub
 }
 
-func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// prepare response for flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		fmt.Printf("server[%s]: client %s could not be flushed\n",
-			pubsub.id, r.RemoteAddr)
+			pubSub.id, r.RemoteAddr)
 		return
 	}
 
 	// subscribe to new chunks
 	sub := NewSubscriber(r.RemoteAddr)
-	pubsub.Subscribe(sub)
-	defer pubsub.Unsubscribe(sub)
+	pubSub.Subscribe(sub)
+	defer pubSub.Unsubscribe(sub)
 
 	mw := multipart.NewWriter(w)
 	contentType := fmt.Sprintf("multipart/x-mixed-replace; boundary=%s", mw.Boundary())
@@ -366,14 +376,14 @@ func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		mimeHeader.Set("Content-Size", fmt.Sprintf("%d", len(data)))
 		part, err := mw.CreatePart(mimeHeader)
 		if err != nil {
-			fmt.Printf("server[%s]: part create failed: %s\n", pubsub.id, err)
+			fmt.Printf("server[%s]: part create failed: %s\n", pubSub.id, err)
 			return
 		}
 
 		// send image to client
 		_, err = part.Write(data)
 		if err != nil {
-			fmt.Printf("server[%s]: part write failed: %s\n", pubsub.id, err)
+			fmt.Printf("server[%s]: part write failed: %s\n", pubSub.id, err)
 			return
 		}
 
@@ -382,7 +392,7 @@ func (pubsub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	err := mw.Close()
 	if err != nil {
-		fmt.Printf("server[%s]: mime close failed: %s\n", pubsub.id, err)
+		fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
 	}
 }
 
@@ -391,11 +401,11 @@ func startSource(source, username, password, proxyUrl string) error {
 	if err != nil {
 		return fmt.Errorf("chunker[%s]: create failed: %s", proxyUrl, err)
 	}
-	pubsub := NewPubSub(proxyUrl, chunker)
-	pubsub.Start()
+	pubSub := NewPubSub(proxyUrl, chunker)
+	pubSub.Start()
 
 	fmt.Printf("chunker[%s]: serving from %s\n", proxyUrl, source)
-	http.Handle(proxyUrl, pubsub)
+	http.Handle(proxyUrl, pubSub)
 
 	return nil
 }
@@ -412,7 +422,12 @@ func loadConfig(config string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		err := file.Close()
+		if err != nil {
+			fmt.Printf("file[%s]: file close failed: %s\n", file.Name(), err)
+		}
+	}()
 
 	sources := make([]configSource, 0)
 	dec := json.NewDecoder(file)
@@ -424,7 +439,7 @@ func loadConfig(config string) error {
 	exists := make(map[string]bool)
 	for _, conf := range sources {
 		if exists[conf.Url] {
-			return fmt.Errorf("duplicate proxy url: %s", conf.Url)
+			return fmt.Errorf("duplicate proxy uri: %s", conf.Url)
 		}
 
 		err = startSource(conf.Source, conf.Username, conf.Password, conf.Url)
@@ -439,10 +454,10 @@ func loadConfig(config string) error {
 }
 
 func main() {
-	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg url")
+	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg uri")
 	username := flag.String("username", "", "source mjpg username")
 	password := flag.String("password", "", "source mjpg password")
-	url := flag.String("url", "/", "proxy serve url")
+	url := flag.String("uri", "/", "proxy serve uri")
 	config := flag.String("config", "", "JSON configuration file to load")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	flag.Parse()
