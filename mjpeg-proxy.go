@@ -25,6 +25,8 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -44,7 +46,7 @@ import (
 */
 
 type Chunker struct {
-	url      string
+	source   string
 	username string
 	password string
 	resp     *http.Response
@@ -52,20 +54,28 @@ type Chunker struct {
 	stop     chan struct{}
 }
 
-func NewChunker(url, username, password string) *Chunker {
+func NewChunker(source, username, password string) (*Chunker, error) {
 	chunker := new(Chunker)
 
-	chunker.url = url
+	sourceUrl, err := url.Parse(source)
+	if err != nil {
+		return nil, err
+	}
+	if !sourceUrl.IsAbs() {
+		return nil, fmt.Errorf("url is not absolute: %s", source)
+	}
+
+	chunker.source = source
 	chunker.username = username
 	chunker.password = password
 
-	return chunker
+	return chunker, nil
 }
 
 func (chunker *Chunker) Connect() error {
-	fmt.Println("chunker: connecting to", chunker.url)
+	fmt.Println("chunker: connecting to", chunker.source)
 
-	req, err := http.NewRequest("GET", chunker.url, nil)
+	req, err := http.NewRequest("GET", chunker.source, nil)
 	if err != nil {
 		return err
 	}
@@ -419,22 +429,27 @@ func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg url")
 	username := flag.String("username", "", "source mjpg username")
 	password := flag.String("password", "", "source mjpg password")
+	url := flag.String("url", "/", "proxy serve url")
 
 	bind := flag.String("bind", ":8080", "proxy bind address")
-	url := flag.String("url", "/", "proxy serve url")
 
 	flag.Parse()
 
 	// start pubsub client connector
-	chunker := NewChunker(*source, *username, *password)
+	chunker, err := NewChunker(*source, *username, *password)
+	if err != nil {
+		fmt.Println("chunker: create failed:", err)
+		os.Exit(1)
+	}
 	pubsub := NewPubSub(chunker)
-	pubsub.Start()
-
-	// start web server
-	fmt.Printf("server: starting on address %s with url %s\n", *bind, *url)
 	http.Handle(*url, pubsub)
-	err := http.ListenAndServe(*bind, nil)
+
+	// start serving
+	pubsub.Start()
+	fmt.Printf("server: starting on address %s with url %s\n", *bind, *url)
+	err = http.ListenAndServe(*bind, nil)
 	if err != nil {
 		fmt.Println("server: failed to start:", err)
+		os.Exit(1)
 	}
 }
