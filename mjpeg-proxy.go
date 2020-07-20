@@ -414,7 +414,7 @@ type configSource struct {
 	Source   string
 	Username string
 	Password string
-	Url      string
+	Path     string
 }
 
 func loadConfig(filename string) error {
@@ -438,16 +438,16 @@ func loadConfig(filename string) error {
 
 	exists := make(map[string]bool)
 	for _, conf := range sources {
-		if exists[conf.Url] {
-			return fmt.Errorf("duplicate proxy uri: %s", conf.Url)
+		if exists[conf.Path] {
+			return fmt.Errorf("duplicate proxy uri: %s", conf.Path)
 		}
 
-		err = startSource(conf.Source, conf.Username, conf.Password, conf.Url)
+		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path)
 		if err != nil {
 			return err
 		}
 
-		exists[conf.Url] = true
+		exists[conf.Path] = true
 	}
 
 	return nil
@@ -457,7 +457,7 @@ func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg uri")
 	username := flag.String("username", "", "source mjpg username")
 	password := flag.String("password", "", "source mjpg password")
-	url := flag.String("uri", "/", "proxy serve uri")
+	path := flag.String("path", "/", "proxy serve path")
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	flag.Parse()
@@ -466,7 +466,7 @@ func main() {
 	if *sources != "" {
 		err = loadConfig(*sources)
 	} else {
-		err = startSource(*source, *username, *password, *url)
+		err = startSource(*source, *username, *password, *path)
 	}
 	if err != nil {
 		fmt.Println("config:", err)
