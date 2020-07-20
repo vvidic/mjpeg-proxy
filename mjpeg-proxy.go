@@ -425,7 +425,7 @@ func loadConfig(filename string) error {
 	defer func() {
 		err := file.Close()
 		if err != nil {
-			fmt.Printf("file[%s]: file close failed: %s\n", file.Name(), err)
+			fmt.Printf("config: file close failed for %s: %s\n", file.Name(), err)
 		}
 	}()
 
@@ -439,7 +439,7 @@ func loadConfig(filename string) error {
 	exists := make(map[string]bool)
 	for _, conf := range sources {
 		if exists[conf.Path] {
-			return fmt.Errorf("duplicate proxy uri: %s", conf.Path)
+			return fmt.Errorf("duplicate proxy path: %s", conf.Path)
 		}
 
 		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path)
@@ -457,7 +457,7 @@ func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg uri")
 	username := flag.String("username", "", "source mjpg username")
 	password := flag.String("password", "", "source mjpg password")
-	path := flag.String("path", "/", "proxy serve path")
+	path := flag.String("path", "/", "proxy serving path")
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	flag.Parse()
