@@ -97,23 +97,13 @@ func (chunker *Chunker) Connect() error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		defer func() {
-			err := resp.Body.Close()
-			if err != nil {
-				fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
-			}
-		}()
+		chunker.closeResponse(resp)
 		return fmt.Errorf("request failed: %s", resp.Status)
 	}
 
-	boundary, err := getBoundary(*resp)
+	boundary, err := getBoundary(resp)
 	if err != nil {
-		defer func() {
-			err := resp.Body.Close()
-			if err != nil {
-				fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
-			}
-		}()
+		chunker.closeResponse(resp)
 		return err
 	}
 
@@ -123,7 +113,14 @@ func (chunker *Chunker) Connect() error {
 	return nil
 }
 
-func getBoundary(resp http.Response) (string, error) {
+func (chunker *Chunker) closeResponse(resp *http.Response) {
+	err := resp.Body.Close()
+	if err != nil {
+		fmt.Printf("chunker[%s]: body close failed: %s\n", chunker.id, err)
+	}
+}
+
+func getBoundary(resp *http.Response) (string, error) {
 	contentType := resp.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
