@@ -211,7 +211,7 @@ type PubSub struct {
 	pubChan     chan []byte
 	subChan     chan *Subscriber
 	unsubChan   chan *Subscriber
-	subscribers map[*Subscriber]bool
+	subscribers map[*Subscriber]struct{}
 }
 
 func NewPubSub(id string, chunker *Chunker) *PubSub {
@@ -221,7 +221,7 @@ func NewPubSub(id string, chunker *Chunker) *PubSub {
 	pubSub.chunker = chunker
 	pubSub.subChan = make(chan *Subscriber)
 	pubSub.unsubChan = make(chan *Subscriber)
-	pubSub.subscribers = make(map[*Subscriber]bool)
+	pubSub.subscribers = make(map[*Subscriber]struct{})
 
 	return pubSub
 }
@@ -270,7 +270,7 @@ func (pubSub *PubSub) doPublish(data []byte) {
 }
 
 func (pubSub *PubSub) doSubscribe(s *Subscriber) {
-	pubSub.subscribers[s] = true
+	pubSub.subscribers[s] = struct{}{}
 
 	fmt.Printf("pubsub[%s]: added subscriber %s (total=%d)\n",
 		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
