@@ -452,12 +452,12 @@ func loadConfig(filename string) error {
 }
 
 func main() {
-	source := flag.String("source", "http://example.com/img.mjpg", "source mjpg uri")
-	username := flag.String("username", "", "source mjpg username")
-	password := flag.String("password", "", "source mjpg password")
-	path := flag.String("path", "/", "proxy serving path")
+	source := flag.String("source", "http://example.com/img.mjpg", "source uri")
+	username := flag.String("username", "", "source uri username")
+	password := flag.String("password", "", "source uri password")
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
+	path := flag.String("path", "/", "proxy serving path")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.Parse()
 
