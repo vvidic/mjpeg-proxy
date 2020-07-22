@@ -32,6 +32,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -457,7 +458,12 @@ func main() {
 	path := flag.String("path", "/", "proxy serving path")
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
+	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.Parse()
+
+	if *maxprocs > 0 {
+		runtime.GOMAXPROCS(*maxprocs)
+	}
 
 	var err error
 	if *sources != "" {
