@@ -190,7 +190,7 @@ ChunkLoop:
 		select {
 		case <-chunker.stop:
 			break ChunkLoop
-		case pubChan <- append(data):
+		case pubChan <- data:
 		}
 	}
 
