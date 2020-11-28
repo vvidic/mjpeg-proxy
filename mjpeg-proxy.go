@@ -28,6 +28,7 @@ import (
 	"io/ioutil"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -483,6 +484,52 @@ func loadConfig(filename string) error {
 	return nil
 }
 
+func serveFromSocket(bind *string) error {
+	var err error
+	socketPath := strings.TrimLeft(*bind, "unix:")
+	var listener net.Listener
+	listener, err = net.Listen("unix", socketPath)
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "address already in use") {
+			var fi os.FileInfo
+			fi, err = os.Stat(socketPath)
+			if err != nil {
+				fmt.Println("server: could not bind socket", err)
+				os.Exit(1)
+			}
+
+			if fi.IsDir() {
+				fmt.Println("server: socket path is a directory")
+				os.Exit(1)
+			}
+
+			if fi.Mode()&os.ModeSocket == 0 {
+				fmt.Println("server: socket path is a non-socket file")
+				os.Exit(1)
+			}
+
+			err = os.Remove(socketPath)
+
+			if err != nil {
+				fmt.Println("server: could not unlink socket", err)
+				os.Exit(1)
+			}
+
+			listener, err = net.Listen("unix", socketPath)
+
+			if err != nil {
+				fmt.Println("server: could not bind socket", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("server: could not bind socket", err)
+			os.Exit(1)
+		}
+	}
+	fmt.Printf("server: starting on socket %s\n", *bind)
+	return http.Serve(listener, nil)
+}
+
 var stopDelay time.Duration
 
 func main() {
@@ -511,8 +558,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("server: starting on address %s\n", *bind)
-	err = http.ListenAndServe(*bind, nil)
+	isSocket := strings.HasPrefix(*bind, "unix:")
+
+	if !isSocket {
+		fmt.Printf("server: starting on address %s\n", *bind)
+		err = http.ListenAndServe(*bind, nil)
+	} else {
+		err = serveFromSocket(bind)
+	}
+
 	if err != nil {
 		fmt.Println("server:", err)
 		os.Exit(1)
