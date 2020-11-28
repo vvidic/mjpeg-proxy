@@ -38,6 +38,8 @@ import (
 	"time"
 )
 
+var stopDelay time.Duration
+
 /* Sample source stream starts like this:
 
    HTTP/1.1 200 OK
@@ -484,53 +486,31 @@ func loadConfig(filename string) error {
 	return nil
 }
 
-func serveFromSocket(bind *string) error {
-	var err error
-	socketPath := strings.TrimLeft(*bind, "unix:")
-	var listener net.Listener
-	listener, err = net.Listen("unix", socketPath)
-	if err != nil {
-		if strings.HasSuffix(err.Error(), "address already in use") {
-			var fi os.FileInfo
-			fi, err = os.Stat(socketPath)
-			if err != nil {
-				fmt.Println("server: could not bind socket", err)
-				os.Exit(1)
-			}
-
-			if fi.IsDir() {
-				fmt.Println("server: socket path is a directory")
-				os.Exit(1)
-			}
-
-			if fi.Mode()&os.ModeSocket == 0 {
-				fmt.Println("server: socket path is a non-socket file")
-				os.Exit(1)
-			}
-
-			err = os.Remove(socketPath)
-
-			if err != nil {
-				fmt.Println("server: could not unlink socket", err)
-				os.Exit(1)
-			}
-
-			listener, err = net.Listen("unix", socketPath)
-
-			if err != nil {
-				fmt.Println("server: could not bind socket", err)
-				os.Exit(1)
-			}
-		} else {
-			fmt.Println("server: could not bind socket", err)
-			os.Exit(1)
-		}
+func unixListen(path string) (net.Listener, error) {
+	fi, err := os.Stat(path)
+	if !os.IsNotExist(err) && fi.Mode()&os.ModeSocket != 0 {
+		os.Remove(path)
 	}
-	fmt.Printf("server: starting on socket %s\n", *bind)
-	return http.Serve(listener, nil)
+
+	return net.Listen("unix", path)
 }
 
-var stopDelay time.Duration
+func listenAndServe(addr string) error {
+	var listener net.Listener
+	var err error
+
+	if strings.HasPrefix(addr, "unix:") {
+		listener, err = unixListen(strings.TrimPrefix(addr, "unix:"))
+	} else {
+		listener, err = net.Listen("tcp", addr)
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("server: starting on address %s\n", addr)
+	return http.Serve(listener, nil)
+}
 
 func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source uri")
@@ -558,15 +538,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	isSocket := strings.HasPrefix(*bind, "unix:")
-
-	if !isSocket {
-		fmt.Printf("server: starting on address %s\n", *bind)
-		err = http.ListenAndServe(*bind, nil)
-	} else {
-		err = serveFromSocket(bind)
-	}
-
+	err = listenAndServe(*bind)
 	if err != nil {
 		fmt.Println("server:", err)
 		os.Exit(1)
