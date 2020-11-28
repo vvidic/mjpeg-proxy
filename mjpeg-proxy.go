@@ -39,6 +39,7 @@ import (
 )
 
 var stopDelay time.Duration
+var tcpSendBuffer int
 
 /* Sample source stream starts like this:
 
@@ -486,6 +487,17 @@ func loadConfig(filename string) error {
 	return nil
 }
 
+func connStateEvent(conn net.Conn, event http.ConnState) {
+	if event == http.StateActive && tcpSendBuffer > 0 {
+		switch c := conn.(type) {
+		case *net.TCPConn:
+			c.SetWriteBuffer(tcpSendBuffer)
+		case *net.UnixConn:
+			c.SetWriteBuffer(tcpSendBuffer)
+		}
+	}
+}
+
 func unixListen(path string) (net.Listener, error) {
 	fi, err := os.Stat(path)
 	if !os.IsNotExist(err) && fi.Mode()&os.ModeSocket != 0 {
@@ -509,7 +521,10 @@ func listenAndServe(addr string) error {
 	}
 
 	fmt.Printf("server: starting on address %s\n", addr)
-	return http.Serve(listener, nil)
+	server := &http.Server{
+		ConnState: connStateEvent,
+	}
+	return server.Serve(listener)
 }
 
 func main() {
@@ -521,6 +536,7 @@ func main() {
 	path := flag.String("path", "/", "proxy serving path")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
+	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
 	flag.Parse()
 
 	if *maxprocs > 0 {
