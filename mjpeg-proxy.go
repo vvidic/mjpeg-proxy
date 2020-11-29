@@ -40,6 +40,7 @@ import (
 
 var stopDelay time.Duration
 var tcpSendBuffer int
+var trustProxy *bool
 
 /* Sample source stream starts like this:
 
@@ -371,6 +372,51 @@ func NewSubscriber(client string) *Subscriber {
 	return sub
 }
 
+// If frontend proxy is not trusted, return the requests remote address + port.
+// If proxy is trusted, return IP + Port if the header IP matched remote address.
+// Else, return just the IP address.
+func GetClientAddr(r *http.Request) string {
+	if !*trustProxy {
+		return r.RemoteAddr
+	}
+
+	remoteHost, remotePort, _ := net.SplitHostPort(r.RemoteAddr)
+	parsedHost := net.ParseIP(remoteHost)
+	if parsedHost != nil {
+		remoteHost = parsedHost.String()
+	} else {
+		remoteHost = ""
+	}
+	if len(remotePort) > 0 {
+		remotePort = ":" + remotePort
+	}
+
+	headerIP := r.Header.Get("x-real-ip")
+	parsedHost = net.ParseIP(headerIP)
+	if parsedHost != nil {
+		headerIP = parsedHost.String()
+		if headerIP == remoteHost {
+			return headerIP + remotePort
+		}
+		return headerIP
+	}
+
+	hosts := r.Header.Get("x-forwarded-for")
+	splitHosts := strings.Split(hosts, ",")
+	for _, host := range splitHosts {
+		parsedHost = net.ParseIP(host)
+		if parsedHost != nil {
+			host = parsedHost.String()
+			if host == remoteHost {
+				return host + remotePort
+			}
+			return host
+		}
+	}
+
+	return remoteHost + remotePort
+}
+
 func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// prepare response for flushing
 	flusher, ok := w.(http.Flusher)
@@ -381,7 +427,7 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// subscribe to new chunks
-	sub := NewSubscriber(r.RemoteAddr)
+	sub := NewSubscriber(GetClientAddr(r))
 	pubSub.Subscribe(sub)
 	defer pubSub.Unsubscribe(sub)
 
@@ -534,6 +580,7 @@ func main() {
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	path := flag.String("path", "/", "proxy serving path")
+	trustProxy = flag.Bool("trustproxy", false, "trust client IP reporting of proxy")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
 	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
