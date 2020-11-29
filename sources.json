@@ -1,7 +1,8 @@
 [
    {
       "Source" : "http://213.193.89.202/axis-cgi/mjpg/video.cgi",
-      "Path" : "/source1"
+      "Path" : "/source1",
+      "Rate" : 1.0
    },
    {
       "Source" : "http://klosterplatz.selfip.info/axis-cgi/mjpg/video.cgi",

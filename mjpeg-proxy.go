@@ -41,10 +41,11 @@ type configSource struct {
 	Username string
 	Password string
 	Path     string
+	Rate     float64
 }
 
-func startSource(source, username, password, proxyUrl string) error {
-	chunker, err := NewChunker(proxyUrl, source, username, password)
+func startSource(source, username, password, proxyUrl string, rate float64) error {
+	chunker, err := NewChunker(proxyUrl, source, username, password, rate)
 	if err != nil {
 		return fmt.Errorf("chunker[%s]: create failed: %s", proxyUrl, err)
 	}
@@ -82,7 +83,7 @@ func loadConfig(filename string) error {
 			return fmt.Errorf("duplicate proxy path: %s", conf.Path)
 		}
 
-		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path)
+		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path, conf.Rate)
 		if err != nil {
 			return err
 		}
@@ -140,6 +141,7 @@ func main() {
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	path := flag.String("path", "/", "proxy serving path")
+	rate := flag.Float64("rate", 0, "limit output frame rate")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
 	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
@@ -154,7 +156,7 @@ func main() {
 	if *sources != "" {
 		err = loadConfig(*sources)
 	} else {
-		err = startSource(*source, *username, *password, *path)
+		err = startSource(*source, *username, *password, *path, *rate)
 	}
 	if err != nil {
 		fmt.Println("config:", err)

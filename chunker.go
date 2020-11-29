@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 /* Sample source stream starts like this:
@@ -53,9 +54,10 @@ type Chunker struct {
 	resp     *http.Response
 	boundary string
 	stop     chan struct{}
+	rate     float64
 }
 
-func NewChunker(id, source, username, password string) (*Chunker, error) {
+func NewChunker(id, source, username, password string, rate float64) (*Chunker, error) {
 	chunker := new(Chunker)
 
 	sourceUrl, err := url.Parse(source)
@@ -70,6 +72,7 @@ func NewChunker(id, source, username, password string) (*Chunker, error) {
 	chunker.source = source
 	chunker.username = username
 	chunker.password = password
+	chunker.rate = rate
 
 	return chunker, nil
 }
@@ -153,6 +156,13 @@ func (chunker *Chunker) Start(pubChan chan []byte) {
 	var failure error
 	mr := multipart.NewReader(body, chunker.boundary)
 
+	var ticker *time.Ticker
+	firstFrame := true
+	if chunker.rate > 0 {
+		interval := float64(time.Second) / chunker.rate
+		ticker = time.NewTicker(time.Duration(interval))
+	}
+
 ChunkLoop:
 	for {
 		part, err := mr.NextPart()
@@ -181,11 +191,26 @@ ChunkLoop:
 			break ChunkLoop
 		}
 
-		select {
+		select { // check for stop
 		case <-chunker.stop:
 			break ChunkLoop
-		case pubChan <- data:
+		default:
 		}
+
+		if !firstFrame && ticker != nil {
+			select {
+			case <-ticker.C: // use frame
+			default: // skip frame
+				continue ChunkLoop
+			}
+		}
+
+		firstFrame = false
+		pubChan <- data
+	}
+
+	if ticker != nil {
+		ticker.Stop()
 	}
 
 	if failure != nil {
