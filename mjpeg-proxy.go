@@ -40,7 +40,7 @@ import (
 
 var stopDelay time.Duration
 var tcpSendBuffer int
-var trustProxy *bool
+var trustProxy bool
 
 /* Sample source stream starts like this:
 
@@ -376,7 +376,7 @@ func NewSubscriber(client string) *Subscriber {
 // If proxy is trusted, return IP + Port if the header IP matched remote address.
 // Else, return just the IP address.
 func GetClientAddr(r *http.Request) string {
-	if !*trustProxy {
+	if !trustProxy {
 		return r.RemoteAddr
 	}
 
@@ -580,8 +580,8 @@ func main() {
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	path := flag.String("path", "/", "proxy serving path")
-	trustProxy = flag.Bool("trustproxy", false, "trust client IP reporting of proxy")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
+	flag.BoolVar(&trustProxy, "trustproxy", false, "trust client IP reporting of proxy")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
 	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
 	flag.Parse()
