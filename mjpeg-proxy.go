@@ -38,6 +38,7 @@ import (
 	"time"
 )
 
+var clientHeader string
 var stopDelay time.Duration
 var tcpSendBuffer int
 
@@ -381,7 +382,7 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// subscribe to new chunks
-	sub := NewSubscriber(r.RemoteAddr)
+	sub := NewSubscriber(clientAddress(r))
 	pubSub.Subscribe(sub)
 	defer pubSub.Unsubscribe(sub)
 
@@ -428,6 +429,20 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
 	}
+}
+
+func clientAddress(r *http.Request) string {
+	client := r.RemoteAddr
+
+	if clientHeader != "" {
+		header := r.Header.Get(clientHeader)
+		hosts := strings.Split(header, ",")
+		if hosts[0] != "" {
+			client = hosts[0]
+		}
+	}
+
+	return client
 }
 
 func startSource(source, username, password, proxyUrl string) error {
@@ -537,6 +552,7 @@ func main() {
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
 	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
+	flag.StringVar(&clientHeader, "clientheader", "", "request header with client address")
 	flag.Parse()
 
 	if *maxprocs > 0 {
