@@ -191,60 +191,84 @@ func clientAddress(r *http.Request) string {
 }
 
 func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// prepare response for flushing
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		fmt.Printf("server[%s]: client %s could not be flushed\n",
-			pubSub.id, r.RemoteAddr)
-		return
-	}
-
-	// subscribe to new chunks
-	sub := NewSubscriber(clientAddress(r))
-	pubSub.Subscribe(sub)
-	defer pubSub.Unsubscribe(sub)
-
-	mw := multipart.NewWriter(w)
-	contentType := fmt.Sprintf("multipart/x-mixed-replace; boundary=%s", mw.Boundary())
-
-	mimeHeader := make(textproto.MIMEHeader)
-	mimeHeader.Set("Content-Type", "image/jpeg")
-
-	headersSent := false
-	for {
-		// wait for next chunk
-		data, ok := <-sub.ChunkChannel
+	switch r.Method {
+	case http.MethodGet:
+		// prepare response for flushing
+		flusher, ok := w.(http.Flusher)
 		if !ok {
+			fmt.Printf("server[%s]: client %s could not be flushed\n",
+				pubSub.id, r.RemoteAddr)
 			return
 		}
 
-		// send HTTP header before first chunk
-		if !headersSent {
-			header := w.Header()
-			header.Add("Content-Type", contentType)
-			w.WriteHeader(http.StatusOK)
-			headersSent = true
+		// subscribe to new chunks
+		sub := NewSubscriber(clientAddress(r))
+		pubSub.Subscribe(sub)
+		defer pubSub.Unsubscribe(sub)
+
+		mw := multipart.NewWriter(w)
+		contentType := fmt.Sprintf("multipart/x-mixed-replace; boundary=%s", mw.Boundary())
+
+		mimeHeader := make(textproto.MIMEHeader)
+		mimeHeader.Set("Content-Type", "image/jpeg")
+
+		headersSent := false
+		for {
+			// wait for next chunk
+			data, ok := <-sub.ChunkChannel
+			if !ok {
+				return
+			}
+
+			// send HTTP header before first chunk
+			if !headersSent {
+				header := w.Header()
+				header.Add("Content-Type", contentType)
+				w.WriteHeader(http.StatusOK)
+				headersSent = true
+
+				if r.Method == http.MethodHead {
+					break
+				}
+			}
+
+			mimeHeader.Set("Content-Size", fmt.Sprintf("%d", len(data)))
+			part, err := mw.CreatePart(mimeHeader)
+			if err != nil {
+				fmt.Printf("server[%s]: part create failed: %s\n", pubSub.id, err)
+				break
+			}
+
+			// send image to client
+			_, err = part.Write(data)
+			if err != nil {
+				fmt.Printf("server[%s]: part write failed: %s\n", pubSub.id, err)
+				break
+			}
+
+			flusher.Flush()
 		}
 
-		mimeHeader.Set("Content-Size", fmt.Sprintf("%d", len(data)))
-		part, err := mw.CreatePart(mimeHeader)
+		err := mw.Close()
 		if err != nil {
-			fmt.Printf("server[%s]: part create failed: %s\n", pubSub.id, err)
+			fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
+		}
+	case http.MethodHead:
+		// prepare response for flushing
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			fmt.Printf("server[%s]: client %s could not be flushed\n",
+				pubSub.id, r.RemoteAddr)
 			return
 		}
 
-		// send image to client
-		_, err = part.Write(data)
-		if err != nil {
-			fmt.Printf("server[%s]: part write failed: %s\n", pubSub.id, err)
-			return
-		}
+		header := w.Header()
+		header.Add("Content-Type", "multipart/x-mixed-replace")
+		w.WriteHeader(http.StatusOK)
 
 		flusher.Flush()
-	}
-
-	err := mw.Close()
-	if err != nil {
-		fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
+	default:
+		w.Header().Set("Allow", fmt.Sprintf("%s, %s", http.MethodGet, http.MethodHead))
+		http.Error(w, "405 Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
