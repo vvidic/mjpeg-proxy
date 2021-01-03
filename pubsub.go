@@ -210,12 +210,19 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mimeHeader := make(textproto.MIMEHeader)
 	mimeHeader.Set("Content-Type", "image/jpeg")
 
-	headersSent := false
+	var data []byte
+	var chunkOk, headersSent bool
+
+LOOP:
 	for {
 		// wait for next chunk
-		data, ok := <-sub.ChunkChannel
-		if !ok {
-			return
+		select {
+		case data, chunkOk = <-sub.ChunkChannel:
+			if !chunkOk {
+				break LOOP
+			}
+		case <-r.Context().Done():
+			break LOOP
 		}
 
 		// send HTTP header before first chunk
