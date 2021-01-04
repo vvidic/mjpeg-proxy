@@ -191,6 +191,11 @@ func clientAddress(r *http.Request) string {
 }
 
 func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", fmt.Sprintf("%s, %s", http.MethodGet, http.MethodHead))
+		http.Error(w, "405 Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	// prepare response for flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
