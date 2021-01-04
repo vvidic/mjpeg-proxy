@@ -126,7 +126,7 @@ func getBoundary(resp *http.Response) (string, error) {
 		return "", err
 	}
 	if !strings.HasPrefix(mediaType, "multipart/") {
-		return "", fmt.Errorf("expected multipart media type: %s", contentType)
+		return "", fmt.Errorf("unexpected media type: %s", contentType)
 	}
 
 	boundary := params["boundary"]
