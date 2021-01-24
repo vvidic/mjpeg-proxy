@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -119,12 +118,32 @@ func (chunker *Chunker) closeResponse(resp *http.Response) {
 	}
 }
 
+func parseMediaType(contentType string) (string, map[string]string) {
+	mediaType := ""
+	params := make(map[string]string)
+	for i, s := range strings.Split(contentType, ";") {
+		part := strings.TrimSpace(s)
+		if i == 0 {
+			mediaType = part
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		k := kv[0]
+		v := ""
+		if len(kv) > 1 {
+			v = kv[1]
+		}
+		if len(v) > 1 && v[0] == '"' && v[len(v)-1] == '"' {
+			v = v[1 : len(v)-1]
+		}
+		params[k] = v
+	}
+	return mediaType, params
+}
+
 func getBoundary(resp *http.Response) (string, error) {
 	contentType := resp.Header.Get("Content-Type")
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return "", err
-	}
+	mediaType, params := parseMediaType(contentType)
 	if !strings.HasPrefix(mediaType, "multipart/") {
 		return "", fmt.Errorf("unexpected media type: %s", contentType)
 	}
