@@ -20,6 +20,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"io"
@@ -47,16 +48,17 @@ import (
 
 type Chunker struct {
 	id       string
-	source   string
+	source   *url.URL
 	username string
 	password string
+	digest   bool
 	resp     *http.Response
 	boundary string
 	stop     chan struct{}
 	rate     float64
 }
 
-func NewChunker(id, source, username, password string, rate float64) (*Chunker, error) {
+func NewChunker(id, source, username, password string, digest bool, rate float64) (*Chunker, error) {
 	chunker := new(Chunker)
 
 	sourceUrl, err := url.Parse(source)
@@ -68,23 +70,73 @@ func NewChunker(id, source, username, password string, rate float64) (*Chunker, 
 	}
 
 	chunker.id = id
-	chunker.source = source
+	chunker.source = sourceUrl
 	chunker.username = username
 	chunker.password = password
+	chunker.digest = digest
 	chunker.rate = rate
 
 	return chunker, nil
 }
 
+func (chunker *Chunker) basicAuthEnabled() bool {
+	return chunker.username != "" && chunker.password != "" && !chunker.digest
+}
+
+func (chunker *Chunker) digestAuthEnabled() bool {
+	return chunker.username != "" && chunker.password != "" && chunker.digest
+}
+
+func (chunker *Chunker) digestAuthRequested(resp *http.Response) bool {
+	return resp.StatusCode == http.StatusUnauthorized &&
+		strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "Digest ")
+}
+
+func (chunker *Chunker) digestAuthBuild(resp *http.Response) string {
+	auth := strings.TrimPrefix(resp.Header.Get("WWW-Authenticate"), "Digest ")
+	authMap := make(map[string]string)
+	for _, part := range strings.Split(auth, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		key := kv[0]
+		val := strings.Trim(kv[1], `"`)
+		authMap[key] = val
+	}
+
+	ha1 := md5.New()
+	io.WriteString(ha1, chunker.username)
+	io.WriteString(ha1, ":")
+	io.WriteString(ha1, authMap["realm"])
+	io.WriteString(ha1, ":")
+	io.WriteString(ha1, chunker.password)
+	ha1hex := fmt.Sprintf("%x", ha1.Sum(nil))
+
+	ha2 := md5.New()
+	io.WriteString(ha2, "GET:")
+	uri := chunker.source.RequestURI()
+	io.WriteString(ha2, uri)
+	ha2hex := fmt.Sprintf("%x", ha2.Sum(nil))
+
+	ha := md5.New()
+	io.WriteString(ha, ha1hex)
+	io.WriteString(ha, ":")
+	io.WriteString(ha, authMap["nonce"])
+	io.WriteString(ha, ":")
+	io.WriteString(ha, ha2hex)
+	response := fmt.Sprintf("%x", ha.Sum(nil))
+
+	return fmt.Sprintf(`username="%s", realm="%s", nonce="%s", response="%s", uri="%s"`,
+		chunker.username, authMap["realm"], authMap["nonce"], response, uri)
+}
+
 func (chunker *Chunker) Connect() error {
 	fmt.Printf("chunker[%s]: connecting to %s\n", chunker.id, chunker.source)
 
-	req, err := http.NewRequest("GET", chunker.source, nil)
+	req, err := http.NewRequest("GET", chunker.source.String(), nil)
 	if err != nil {
 		return err
 	}
 
-	if chunker.username != "" && chunker.password != "" {
+	if chunker.basicAuthEnabled() {
 		req.SetBasicAuth(chunker.username, chunker.password)
 	}
 
@@ -92,6 +144,16 @@ func (chunker *Chunker) Connect() error {
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
+	}
+
+	if chunker.digestAuthEnabled() && chunker.digestAuthRequested(resp) {
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+		req.Header.Set("Authorization", "Digest "+chunker.digestAuthBuild(resp))
+		resp, err = client.Do(req)
+		if err != nil {
+			return err
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {

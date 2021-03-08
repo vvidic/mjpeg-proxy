@@ -40,12 +40,13 @@ type configSource struct {
 	Source   string
 	Username string
 	Password string
+	Digest   bool
 	Path     string
 	Rate     float64
 }
 
-func startSource(source, username, password, proxyUrl string, rate float64) error {
-	chunker, err := NewChunker(proxyUrl, source, username, password, rate)
+func startSource(source, username, password, proxyUrl string, digest bool, rate float64) error {
+	chunker, err := NewChunker(proxyUrl, source, username, password, digest, rate)
 	if err != nil {
 		return fmt.Errorf("chunker[%s]: create failed: %s", proxyUrl, err)
 	}
@@ -83,7 +84,7 @@ func loadConfig(filename string) error {
 			return fmt.Errorf("duplicate proxy path: %s", conf.Path)
 		}
 
-		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path, conf.Rate)
+		err = startSource(conf.Source, conf.Username, conf.Password, conf.Path, conf.Digest, conf.Rate)
 		if err != nil {
 			return err
 		}
@@ -138,6 +139,7 @@ func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source uri")
 	username := flag.String("username", "", "source uri username")
 	password := flag.String("password", "", "source uri password")
+	digest := flag.Bool("digest", false, "source uri uses digest authentication")
 	sources := flag.String("sources", "", "JSON configuration file to load sources from")
 	bind := flag.String("bind", ":8080", "proxy bind address")
 	path := flag.String("path", "/", "proxy serving path")
@@ -156,7 +158,7 @@ func main() {
 	if *sources != "" {
 		err = loadConfig(*sources)
 	} else {
-		err = startSource(*source, *username, *password, *path, *rate)
+		err = startSource(*source, *username, *password, *path, *digest, *rate)
 	}
 	if err != nil {
 		fmt.Println("config:", err)
