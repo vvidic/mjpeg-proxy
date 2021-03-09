@@ -21,6 +21,7 @@ package main
 
 import (
 	"crypto/md5"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -95,37 +96,60 @@ func (chunker *Chunker) digestAuthRequested(resp *http.Response) bool {
 func (chunker *Chunker) digestAuthBuild(resp *http.Response) string {
 	auth := strings.TrimPrefix(resp.Header.Get("WWW-Authenticate"), "Digest ")
 	authMap := make(map[string]string)
+	authQop := false
 	for _, part := range strings.Split(auth, ",") {
 		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
 		key := kv[0]
 		val := strings.Trim(kv[1], `"`)
 		authMap[key] = val
+		if key == "qop" {
+			for _, qop := range strings.Split(val, ",") {
+				if qop == "auth" {
+					authQop = true
+					break
+				}
+			}
+		}
 	}
 
-	ha1 := md5.New()
-	io.WriteString(ha1, chunker.username)
-	io.WriteString(ha1, ":")
-	io.WriteString(ha1, authMap["realm"])
-	io.WriteString(ha1, ":")
-	io.WriteString(ha1, chunker.password)
-	ha1hex := fmt.Sprintf("%x", ha1.Sum(nil))
+	a1 := fmt.Sprintf("%s:%s:%s", chunker.username, authMap["realm"], chunker.password)
+	h1 := md5.New()
+	io.WriteString(h1, a1)
+	h1hex := fmt.Sprintf("%x", h1.Sum(nil))
 
-	ha2 := md5.New()
-	io.WriteString(ha2, "GET:")
 	uri := chunker.source.RequestURI()
-	io.WriteString(ha2, uri)
-	ha2hex := fmt.Sprintf("%x", ha2.Sum(nil))
+	a2 := fmt.Sprintf("%s:%s", "GET", uri)
+	h2 := md5.New()
+	io.WriteString(h2, a2)
+	h2hex := fmt.Sprintf("%x", h2.Sum(nil))
 
-	ha := md5.New()
-	io.WriteString(ha, ha1hex)
-	io.WriteString(ha, ":")
-	io.WriteString(ha, authMap["nonce"])
-	io.WriteString(ha, ":")
-	io.WriteString(ha, ha2hex)
-	response := fmt.Sprintf("%x", ha.Sum(nil))
+	b := make([]byte, 6)
+	rand.Read(b)
+	cnonce := fmt.Sprintf("%x", b)
+	nc := fmt.Sprintf("%08x", 1)
 
-	return fmt.Sprintf(`username="%s", realm="%s", nonce="%s", response="%s", uri="%s"`,
+	a := fmt.Sprintf("%s:%s:", h1hex, authMap["nonce"])
+	if authQop {
+		a += fmt.Sprintf("%s:%s:%s:", nc, cnonce, "auth")
+	}
+	a += h2hex
+	h := md5.New()
+	io.WriteString(h, a)
+	response := fmt.Sprintf("%x", h.Sum(nil))
+
+	result := fmt.Sprintf(`username="%s", realm="%s", nonce="%s", response="%s", uri="%s"`,
 		chunker.username, authMap["realm"], authMap["nonce"], response, uri)
+
+	if authQop {
+		result += fmt.Sprintf(`, nc=%s, cnonce="%s", qop=%s, algorithm=%s`,
+			nc, cnonce, "auth", "MD5")
+	}
+
+	if opaque, found := authMap["opaque"]; found {
+		result += fmt.Sprintf(`, opaque="%s"`, opaque)
+	}
+
+	return result
 }
 
 func (chunker *Chunker) Connect() error {
