@@ -123,7 +123,7 @@ func (chunker *Chunker) digestAuthBuild(resp *http.Response) string {
 	io.WriteString(h2, a2)
 	h2hex := fmt.Sprintf("%x", h2.Sum(nil))
 
-	b := make([]byte, 6)
+	b := make([]byte, 8)
 	rand.Read(b)
 	cnonce := fmt.Sprintf("%x", b)
 	nc := fmt.Sprintf("%08x", 1)
