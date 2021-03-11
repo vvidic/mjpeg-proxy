@@ -120,7 +120,7 @@ func (pubSub *PubSub) doSubscribe(s *Subscriber) {
 	fmt.Printf("pubsub[%s]: added subscriber %s (total=%d)\n",
 		pubSub.id, s.RemoteAddr, len(pubSub.subscribers))
 
-	if len(pubSub.subscribers) == 1 {
+	if pubSub.pubChan == nil {
 		if err := pubSub.startChunker(); err != nil {
 			fmt.Printf("pubsub[%s]: failed to start chunker: %s\n",
 				pubSub.id, err)
