@@ -32,9 +32,12 @@ import (
 	"time"
 )
 
-var clientHeader string
-var stopDelay time.Duration
-var tcpSendBuffer int
+var (
+	clientHeader  string
+	frameTimeout  time.Duration
+	stopDelay     time.Duration
+	tcpSendBuffer int
+)
 
 type configSource struct {
 	Source   string
@@ -145,6 +148,7 @@ func main() {
 	path := flag.String("path", "/", "proxy serving path")
 	rate := flag.Float64("rate", 0, "limit output frame rate")
 	maxprocs := flag.Int("maxprocs", 0, "limit number of CPUs used")
+	flag.DurationVar(&frameTimeout, "frametimeout", 60*time.Second, "limit waiting for next frame")
 	flag.DurationVar(&stopDelay, "stopduration", 60*time.Second, "follow source after last client")
 	flag.IntVar(&tcpSendBuffer, "sendbuffer", 4096, "limit buffering of frames")
 	flag.StringVar(&clientHeader, "clientheader", "", "request header with client address")

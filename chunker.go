@@ -20,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,6 +57,7 @@ type Chunker struct {
 	boundary string
 	stop     chan struct{}
 	rate     float64
+	cancel   context.CancelFunc
 }
 
 func NewChunker(id, source, username, password string, digest bool, rate float64) (*Chunker, error) {
@@ -93,6 +96,15 @@ func (chunker *Chunker) Connect() error {
 	if err != nil {
 		return err
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req = req.WithContext(ctx)
+	chunker.cancel = cancel
+	defer func() {
+		if chunker.stop == nil { // connection failed
+			cancel()
+		}
+	}()
 
 	if chunker.basicAuthEnabled() {
 		req.SetBasicAuth(chunker.username, chunker.password)
@@ -182,6 +194,26 @@ func (chunker *Chunker) GetHeader() http.Header {
 	return chunker.resp.Header
 }
 
+func (chunker *Chunker) watcher(timeout time.Duration, counter *int32) {
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+
+WatchLoop:
+	for {
+		select {
+		case <-ticker.C:
+			framesReceived := atomic.SwapInt32(counter, 0)
+			if framesReceived == 0 {
+				fmt.Printf("chunker[%s]: frame timeout\n", chunker.id)
+				chunker.cancel()
+				break WatchLoop
+			}
+		case <-chunker.stop:
+			break WatchLoop
+		}
+	}
+}
+
 func (chunker *Chunker) Start(pubChan chan []byte) {
 	fmt.Printf("chunker[%s]: started\n", chunker.id)
 
@@ -204,9 +236,15 @@ func (chunker *Chunker) Start(pubChan chan []byte) {
 		ticker = time.NewTicker(time.Duration(interval))
 	}
 
+	var frameCounter int32
+	if frameTimeout > 0 {
+		go chunker.watcher(frameTimeout, &frameCounter)
+	}
+
 ChunkLoop:
 	for {
 		part, err := mr.NextPart()
+		atomic.AddInt32(&frameCounter, 1)
 		if err == io.EOF {
 			break ChunkLoop
 		}
@@ -253,6 +291,7 @@ ChunkLoop:
 	if ticker != nil {
 		ticker.Stop()
 	}
+	chunker.cancel()
 
 	if failure != nil {
 		fmt.Printf("chunker[%s]: failed: %s\n", chunker.id, failure)
