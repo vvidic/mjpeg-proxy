@@ -20,8 +20,6 @@
 package main
 
 import (
-	"crypto/md5"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -88,70 +86,6 @@ func (chunker *Chunker) digestAuthEnabled() bool {
 	return chunker.username != "" && chunker.password != "" && chunker.digest
 }
 
-func (chunker *Chunker) digestAuthRequested(resp *http.Response) bool {
-	return resp.StatusCode == http.StatusUnauthorized &&
-		strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "Digest ")
-}
-
-func (chunker *Chunker) digestAuthBuild(resp *http.Response) string {
-	auth := strings.TrimPrefix(resp.Header.Get("WWW-Authenticate"), "Digest ")
-	authMap := make(map[string]string)
-	authQop := false
-	for _, part := range strings.Split(auth, ",") {
-		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		key := kv[0]
-		val := strings.Trim(kv[1], `"`)
-		authMap[key] = val
-		if key == "qop" {
-			for _, qop := range strings.Split(val, ",") {
-				if qop == "auth" {
-					authQop = true
-					break
-				}
-			}
-		}
-	}
-
-	a1 := fmt.Sprintf("%s:%s:%s", chunker.username, authMap["realm"], chunker.password)
-	h1 := md5.New()
-	io.WriteString(h1, a1)
-	h1hex := fmt.Sprintf("%x", h1.Sum(nil))
-
-	uri := chunker.source.RequestURI()
-	a2 := fmt.Sprintf("%s:%s", "GET", uri)
-	h2 := md5.New()
-	io.WriteString(h2, a2)
-	h2hex := fmt.Sprintf("%x", h2.Sum(nil))
-
-	b := make([]byte, 8)
-	rand.Read(b)
-	cnonce := fmt.Sprintf("%x", b)
-	nc := fmt.Sprintf("%08x", 1)
-
-	a := fmt.Sprintf("%s:%s:", h1hex, authMap["nonce"])
-	if authQop {
-		a += fmt.Sprintf("%s:%s:%s:", nc, cnonce, "auth")
-	}
-	a += h2hex
-	h := md5.New()
-	io.WriteString(h, a)
-	response := fmt.Sprintf("%x", h.Sum(nil))
-
-	result := fmt.Sprintf(`username="%s", realm="%s", nonce="%s", response="%s", uri="%s"`,
-		chunker.username, authMap["realm"], authMap["nonce"], response, uri)
-
-	if authQop {
-		result += fmt.Sprintf(`, nc=%s, cnonce="%s", qop=%s, algorithm=%s`,
-			nc, cnonce, "auth", "MD5")
-	}
-
-	if opaque, found := authMap["opaque"]; found {
-		result += fmt.Sprintf(`, opaque="%s"`, opaque)
-	}
-
-	return result
-}
-
 func (chunker *Chunker) Connect() error {
 	fmt.Printf("chunker[%s]: connecting to %s\n", chunker.id, chunker.source)
 
@@ -170,10 +104,12 @@ func (chunker *Chunker) Connect() error {
 		return err
 	}
 
-	if chunker.digestAuthEnabled() && chunker.digestAuthRequested(resp) {
+	if chunker.digestAuthEnabled() && digestAuthRequested(resp) {
 		io.Copy(ioutil.Discard, resp.Body)
 		resp.Body.Close()
-		req.Header.Set("Authorization", "Digest "+chunker.digestAuthBuild(resp))
+		digestAuth := digestAuthBuild(chunker.username, chunker.password,
+			chunker.source.RequestURI(), resp)
+		req.Header.Set("Authorization", "Digest "+digestAuth)
 		resp, err = client.Do(req)
 		if err != nil {
 			return err
