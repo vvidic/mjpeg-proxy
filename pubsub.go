@@ -239,7 +239,7 @@ LOOP:
 			headersSent = true
 		}
 
-		mimeHeader.Set("Content-Size", fmt.Sprintf("%d", len(data)))
+		mimeHeader.Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		part, err := mw.CreatePart(mimeHeader)
 		if err != nil {
 			fmt.Printf("server[%s]: part create failed: %s\n", pubSub.id, err)
