@@ -104,9 +104,7 @@ func (pubSub *PubSub) loop() {
 }
 
 func (pubSub *PubSub) doPublish(data []byte) {
-	subs := pubSub.subscribers
-
-	for s := range subs {
+	for s := range pubSub.subscribers {
 		select {
 		case s.ChunkChannel <- data: // try to send
 		default: // or skip this frame
