@@ -24,6 +24,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -188,12 +189,29 @@ func clientAddress(r *http.Request) string {
 	return client
 }
 
+func parseSendInterval(fps string) time.Duration {
+	f, err := strconv.ParseFloat(fps, 64)
+	if err != nil {
+		return 0
+	}
+
+	return time.Duration(1000.0/f) * time.Millisecond
+}
+
 func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", fmt.Sprintf("%s, %s", http.MethodGet, http.MethodHead))
 		http.Error(w, fmt.Sprintf("HTTP method %s not supported", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
+
+	// allow client to lower the frame rate
+	err := r.ParseForm()
+	if err != nil {
+		http.Error(w, "Invalid query", http.StatusBadRequest)
+		return
+	}
+	sendInterval := parseSendInterval(r.FormValue("fps"))
 
 	// prepare response for flushing
 	flusher, ok := w.(http.Flusher)
@@ -216,6 +234,7 @@ func (pubSub *PubSub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var data []byte
 	var chunkOk, headersSent bool
+	var lastSendTime time.Time
 
 LOOP:
 	for {
@@ -235,8 +254,11 @@ LOOP:
 			header.Add("Content-Type", contentType)
 			w.WriteHeader(http.StatusOK)
 			headersSent = true
+		} else if sendInterval > 0 && time.Now().Sub(lastSendTime) < sendInterval {
+			continue // skip this chunk
 		}
 
+		lastSendTime = time.Now()
 		mimeHeader.Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		part, err := mw.CreatePart(mimeHeader)
 		if err != nil {
@@ -260,7 +282,7 @@ LOOP:
 		return
 	}
 
-	err := mw.Close()
+	err = mw.Close()
 	if err != nil {
 		fmt.Printf("server[%s]: mime close failed: %s\n", pubSub.id, err)
 	}
