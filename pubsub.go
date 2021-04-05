@@ -131,10 +131,15 @@ func (pubSub *PubSub) doSubscribe(s *Subscriber) {
 func (pubSub *PubSub) stopSubscribers() {
 	for s := range pubSub.subscribers {
 		close(s.ChunkChannel)
+		pubSub.doUnsubscribe(s)
 	}
 }
 
 func (pubSub *PubSub) doUnsubscribe(s *Subscriber) {
+	if _, exists := pubSub.subscribers[s]; !exists {
+		return // already unsubscribed if chunker failed
+	}
+
 	delete(pubSub.subscribers, s)
 
 	fmt.Printf("pubsub[%s]: removed subscriber %s (total=%d)\n",
