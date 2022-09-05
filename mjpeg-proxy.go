@@ -37,6 +37,7 @@ var (
 	frameTimeout  time.Duration
 	stopDelay     time.Duration
 	tcpSendBuffer int
+	pubSubs       []PubSub
 )
 
 type configSource struct {
@@ -55,6 +56,7 @@ func startSource(source, username, password, proxyUrl string, digest bool, rate 
 	}
 	pubSub := NewPubSub(proxyUrl, chunker)
 	pubSub.Start()
+	pubSubs = append(pubSubs, *pubSub)
 
 	fmt.Printf("chunker[%s]: serving from %s\n", proxyUrl, source)
 	http.Handle(proxyUrl, pubSub)
@@ -138,6 +140,19 @@ func listenAndServe(addr string) error {
 	return server.Serve(listener)
 }
 
+func infoEndpoint(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	data := map[string]interface{}{}
+	connections := map[string]interface{}{}
+
+	for _, pubSub := range pubSubs {
+		connections[pubSub.id] = len(pubSub.subscribers)
+	}
+	data["connections"] = connections
+	json.NewEncoder(w).Encode(data)
+}
+
 func main() {
 	source := flag.String("source", "http://example.com/img.mjpg", "source uri")
 	username := flag.String("username", "", "source uri username")
@@ -169,6 +184,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	http.HandleFunc("/api/info", infoEndpoint)
 	err = listenAndServe(*bind)
 	if err != nil {
 		fmt.Println("server:", err)
